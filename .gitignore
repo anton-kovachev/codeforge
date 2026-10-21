@@ -1,0 +1,68 @@
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.tfvars
+*.tfvars.json
+!terraform/**/terraform.development.tfvars
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# JavaScript / TypeScript
+node_modules/
+.next/
+out/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Terraform working data and state (keep provider lock files tracked)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# AgentCore runtime config (contains account-specific ARNs)
+.bedrock_agentcore.yaml
+.bedrock_agentcore/
+.agentcore/
+.docker
+
+# Local logs and browser automation artifacts
+*.log
+.playwright-mcp/
+
+# Build artifacts
+lambda-package/
+lambda-deployment.zip
+build/
+dist/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
