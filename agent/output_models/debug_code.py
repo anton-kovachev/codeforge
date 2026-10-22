@@ -17,9 +17,18 @@ class DebuggedCodeOutput(BaseModel):
     )
     tests: str = Field(
         description=(
-            "The complete test code used to verify the final code. Tests must target "
-            "updated_code when it is not null, otherwise they must target code."
+            "The complete original user-provided test code. If the user supplied no "
+            "tests, provide the complete tests created for verification. Tests must "
+            "target updated_code when it is not null, otherwise they must target code."
         )
+    )
+    updated_tests: str | None = Field(
+        default=None,
+        description=(
+            "The complete corrected or improved test code when user-provided tests "
+            "needed changes. Use null when the original tests did not need changes. "
+            "When not null, these tests must be the ones used to verify the final code."
+        ),
     )
     description: str = Field(
         description=(

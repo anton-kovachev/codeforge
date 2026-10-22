@@ -8,6 +8,7 @@ dependencies = [
     "bedrock-agentcore-starter-toolkit>=0.1.10",
     "dotenv>=0.9.9",
     "mcp>=2.1.1",
+    "openai>=2.54.0",
     "pydantic>=2.11.9",
     "strands-agents[openai]>=1.8.0",
 ]

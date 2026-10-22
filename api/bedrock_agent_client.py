@@ -46,7 +46,9 @@ def _build_prompt(request: DebugCodeRequest) -> str:
     if request.tests:
         parts += [
             "",
-            "Here are the existing tests to run against it:",
+            "Here are the original tests to run against it. Preserve these in the "
+            "`tests` output. If you change them, return the complete revised tests "
+            "separately as `updated_tests`:",
             "",
             f"```{request.language}",
             request.tests,
@@ -54,13 +56,21 @@ def _build_prompt(request: DebugCodeRequest) -> str:
         ]
     if request.instructions:
         parts += ["", f"Additional instructions: {request.instructions}"]
+    if request.test_instructions:
+        parts += [
+            "",
+            f"Additional test instructions: {request.test_instructions}",
+        ]
     parts += [
         "",
         "Please run this code, write tests for it if none were supplied, execute the tests, ",
         "identify and fix any bugs you find, and reply with the corrected working code together ",
         "identify and fix any bugs you find, and reply with the corrected working code together ",
         "with an explanation of what was wrong. In case of tests being supplied verify that they are logically and syntactically correct and that they pass. ",
-        "Improve them or add more if necessary.",
+        "If supplied tests need improvements, return the original tests unchanged in `tests` "
+        "and the complete passing revised tests in `updated_tests`. Set `updated_tests` to "
+        "null when the supplied tests need no changes. If no tests were supplied, return "
+        "the generated passing tests in `tests` and set `updated_tests` to null.",
     ]
     return "\n".join(parts)
 
@@ -142,12 +152,20 @@ def _parse_agent_output(chunk: str) -> TodoReport | DebuggedCodeOutput:
     raise ValueError("Agent returned an unrecognized response payload")
 
 
-def _invoke_and_iter_chunks(prompt: str, session_id: str) -> Iterator[str]:
+def _invoke_and_iter_chunks(
+    prompt: str,
+    session_id: str,
+    code: str,
+    language: str,
+) -> Iterator[str]:
     """Call the agent runtime and yield its response as a sequence of text chunks (blocking)."""
+    payload = json.dumps(
+        {"prompt": prompt, "code": code, "language": language}
+    ).encode("utf-8")
     if AGENT_RUNTIME_URL:
         request = Request(
             AGENT_RUNTIME_URL,
-            data=json.dumps({"prompt": prompt}).encode("utf-8"),
+            data=payload,
             headers={
                 "Content-Type": "application/json",
                 "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id,
@@ -170,7 +188,7 @@ def _invoke_and_iter_chunks(prompt: str, session_id: str) -> Iterator[str]:
         agentRuntimeArn=AGENT_RUNTIME_ARN,
         qualifier=AGENT_ENDPOINT_NAME,
         runtimeSessionId=session_id,
-        payload=json.dumps({"prompt": prompt}).encode("utf-8"),
+        payload=payload,
     )
 
     yield from _iter_response_chunks(
@@ -209,7 +227,12 @@ def stream_debug_events(
 
         def producer() -> None:
             try:
-                for chunk in _invoke_and_iter_chunks(prompt, session_id):
+                for chunk in _invoke_and_iter_chunks(
+                    prompt,
+                    session_id,
+                    request.code,
+                    request.language,
+                ):
                     loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
             except (
                 Exception
@@ -233,7 +256,7 @@ def stream_debug_events(
                 return
             try:
                 agent_output = _parse_agent_output(item)
-            except (ValueError, ValidationError) as exc:
+            except (RuntimeError, ValueError, ValidationError) as exc:
                 yield ServerSentEvent(
                     event="error",
                     data={"error": str(exc), "session_id": session_id},

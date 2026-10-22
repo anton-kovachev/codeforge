@@ -17,6 +17,10 @@ class DebugCodeRequest(BaseModel):
         None,
         description="Optional extra instructions for the agent, e.g. 'focus on the edge case with empty input'",
     )
+    test_instructions: Optional[str] = Field(
+        None,
+        description="Optional instructions for writing or running tests.",
+    )
     session_id: Optional[str] = Field(
         None, description="Optional session id to continue a previous conversation with the agent"
     )
@@ -43,6 +47,7 @@ class DebuggedCodeOutput(BaseModel):
     code: str
     updated_code: str | None = None
     tests: str
+    updated_tests: str | None = None
     description: str
 
 

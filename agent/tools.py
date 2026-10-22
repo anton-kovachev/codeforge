@@ -61,6 +61,13 @@ def list_todos() -> ToDoReport:
     return get_todo_report()
 
 
+@tool
+def clear_todos() -> ToDoReport:
+    """Clear all todos and return the empty list"""
+    todos.clear()
+    return get_todo_report()
+
+
 def _extract_last_result(response) -> str:
     """Pull the last structured result out of a code interpreter response stream."""
     output = []

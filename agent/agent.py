@@ -1,7 +1,7 @@
+import json
 import os
 import uuid
 from typing import Any
-from mcp.client.streamable_http import streamablehttp_client
 
 from agent_hook_handler import AgentHookHandler
 from aws_bedrock_token_generator import provide_token
@@ -11,11 +11,13 @@ from event_helpers import (
     get_todo_for_tool_call_id,
     is_tool_call_result_event,
 )
+from input_guardrail import CodeInputRejected, extract_code_input, validate_code_input
 from memory import configure_memory_session_manager
 from output_models.debug_code import DebuggedCodeOutput
 from strands import Agent
 from strands.models.openai import OpenAIModel
 from tools import (
+    clear_todos,
     create_todos,
     execute_code,
     get_todo_report,
@@ -38,7 +40,7 @@ mantle_client_args = {
 model = OpenAIModel(
     client_args=mantle_client_args,
     model_id=os.environ.get("AWS_BEDROCK_MODEL_ID", "openai.gpt-oss-120b"),
-    params={"max_tokens": 2024, "temperature": 0.7},
+    params={"max_tokens": 4096, "temperature": 0.7},
 )
 
 system_prompt = """
@@ -55,7 +57,8 @@ Your plan should typically include, as separate todos:
 3. Writing tests for the code if none were supplied, or using the supplied tests.
 4. Writing Python code to run the tests and observe which pass or fail (prefix this todo with "Write Python code to...").
 5. Fixing any bugs found, then re-running the code and tests to confirm the fix, repeating until everything passes.
-6. Reporting back the final, corrected code together with a clear explanation of what was wrong and what you changed.
+6. If supplied tests needed changes, preserve them in the `tests` output field and provide the complete revised test code in `updated_tests`. Otherwise set `updated_tests` to null. If no tests were supplied, provide the generated tests in `tests` and set `updated_tests` to null.
+7. Reporting back the final, corrected code together with a clear explanation of what was wrong and what you changed.
 
 Now use the todo list tools, create a plan, carry out the steps, and reply with the solution. 
 Update the todo list on each step by tracking the todo's state and marking each todo from pending to in progress to completed until are todos are completed and the task is finished.
@@ -81,18 +84,34 @@ async def invoke(payload, context):
     session_id = context.session_id or str(uuid.uuid4())
     print(f"Session ID: {session_id}")
     actor_id = payload.get("actor_id", "default")
+    clear_todos()
 
-    async with ExitStack() as stack:
+    code = payload.get("code")
+    language = payload.get("language")
+    if not isinstance(code, str) or not isinstance(language, str):
+        try:
+            code, language = extract_code_input(user_message or "")
+        except CodeInputRejected as exc:
+            yield json.dumps({"error": str(exc)})
+            return
+
+    try:
+        await validate_code_input(code, language)
+    except CodeInputRejected as exc:
+        yield json.dumps({"error": str(exc)})
+        return
+
+    with ExitStack() as stack:
         mcp_servers = [
-            await stack.enter_context(mcp_server)
-            for mcp_server in get_agent_mcp_servers()
+            stack.enter_context(mcp_server) for mcp_server in get_agent_mcp_servers()
         ]
 
-        [tools.extend(mcp_server.list_tools_sync) for mcp_server in mcp_servers]
+        agent_tools = []
+        [agent_tools.extend(mcp_server.list_tools_sync()) for mcp_server in mcp_servers]
         agent = Agent(
             model=model,
             system_prompt=system_prompt,
-            tools=tools,
+            tools=tools + agent_tools,
             # session_manager=configure_memory_session_manager(session_id, actor_id),
         )
         hook_handler = AgentHookHandler(session_id=session_id)

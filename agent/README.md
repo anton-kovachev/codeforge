@@ -15,7 +15,7 @@ Given a code snippet (and optionally some tests), the agent:
 2. Executes the code in a sandboxed AWS Bedrock AgentCore Code Interpreter session to observe its behavior.
 3. Writes and/or runs tests (pytest) against the code.
 4. Iterates on bugs it finds, re-running the code/tests until they pass.
-5. Returns a structured result with the original code, updated code when changed, the complete tests, and a detailed explanation of the issues and fixes.
+5. Returns a structured result with the original code and tests, optional updated code and tests when changed, and a detailed explanation of the issues and fixes.
 
 ## Tools
 
@@ -41,7 +41,7 @@ Given a code snippet (and optionally some tests), the agent:
    ```
    curl -X POST http://localhost:8080/invocations \
      -H "Content-Type: application/json" \
-     -d '{"prompt": "Here is some Python code to run, test and debug:\n\ndef add(a, b):\n    return a - b\n"}'
+     -d '{"prompt": "Run, test, and debug this code.", "language": "python", "code": "def add(a, b):\n    return a - b"}'
    ```
 
 ## Deploy to AWS Bedrock AgentCore
@@ -49,7 +49,7 @@ Given a code snippet (and optionally some tests), the agent:
 ```
 uv run agentcore configure -e agent.py
 uv run agentcore launch
-uv run agentcore invoke '{"prompt": "..."}'
+uv run agentcore invoke '{"prompt": "Run, test, and debug this code.", "language": "python", "code": "def add(a, b):\n    return a - b"}'
 ```
 
 If your Bedrock model isn't available in your default AWS region, point `configure` at the right one, e.g.:
