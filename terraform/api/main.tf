@@ -36,7 +36,7 @@ resource "null_resource" "build_and_push_app_image" {
     working_dir = path.module
     command     = <<-EOT
       set -euo pipefail
-      docker build -t ${aws_ecr_repository.api.name}:${local.app_hash} ${var.app_dir} --platform linux/arm64 --provenance false
+      docker build --progress=plain -t ${aws_ecr_repository.api.name}:${local.app_hash} ${var.app_dir} --provenance false --platform linux/amd64 --no-cache
       aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${local.registry}
       docker tag ${aws_ecr_repository.api.name}:${local.app_hash} ${local.image_uri}
       docker push ${local.image_uri}
@@ -105,7 +105,7 @@ resource "aws_lambda_function" "api" {
   role          = aws_iam_role.lambda.arn
   package_type  = "Image"
   image_uri     = local.image_uri
-  architectures = ["arm64"]
+  architectures = ["x86_64"]
   memory_size   = var.lambda_memory_size
   timeout       = var.lambda_timeout
 

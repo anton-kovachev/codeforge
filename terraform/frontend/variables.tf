@@ -19,15 +19,3 @@ variable "project_name" {
     error_message = "Project name must contain only lowercase letters, numbers, and hyphens."
   }
 }
-
-variable "app_dir" {
-  description = "The directory of the React (Vite) frontend application"
-  type        = string
-  default     = "../../debugforge-frontend"
-}
-
-variable "build_env" {
-  description = "Environment variables (e.g. VITE_API_URL) exposed to the frontend build"
-  type        = map(string)
-  default     = {}
-}

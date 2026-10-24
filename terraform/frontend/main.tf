@@ -8,16 +8,6 @@ locals {
     Environment = var.environment
     ManagedBy   = "terraform"
   }
-
-
-  # Rebuild and redeploy whenever any frontend source changes (.env, build output and deps excluded).
-  src_files = [for f in fileset(var.app_dir, "**") : f
-    if !startswith(f, "node_modules/") && !startswith(f, "dist/") && !startswith(f, ".git/") && f != ".env" && !startswith(f, ".env.")
-  ]
-  src_hash = sha256(join("", concat(
-    [for f in sort(local.src_files) : filesha256("${var.app_dir}/${f}")],
-    [for k in sort(keys(var.build_env)) : "${k}=${var.build_env[k]}"]
-  )))
 }
 
 resource "aws_s3_bucket" "frontend" {
@@ -65,39 +55,4 @@ resource "aws_s3_bucket_policy" "frontend" {
   })
 
   depends_on = [aws_s3_bucket_public_access_block.frontend]
-}
-
-resource "null_resource" "build_frontend" {
-  triggers = {
-    src_hash = local.src_hash
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    working_dir = "${path.module}/${var.app_dir}"
-    command     = "pnpm install --frozen-lockfile && pnpm build"
-    environment = var.build_env
-  }
-}
-
-resource "null_resource" "deploy_frontend" {
-  triggers = {
-    src_hash = local.src_hash
-    bucket   = aws_s3_bucket.frontend.id
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    working_dir = "${path.module}/${var.app_dir}"
-    command     = <<-EOT
-      set -euo pipefail
-      # Hashed assets are immutable; index.html must always be revalidated.
-      aws s3 sync dist s3://${aws_s3_bucket.frontend.id} --region ${var.aws_region} --delete \
-        --exclude "index.html" --cache-control "public,max-age=31536000,immutable"
-      aws s3 cp dist/index.html s3://${aws_s3_bucket.frontend.id}/index.html --region ${var.aws_region} \
-        --cache-control "no-cache" --content-type "text/html; charset=utf-8"
-    EOT
-  }
-
-  depends_on = [null_resource.build_frontend, aws_s3_bucket_policy.frontend, aws_s3_bucket_website_configuration.frontend]
 }

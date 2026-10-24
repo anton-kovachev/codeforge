@@ -6,10 +6,13 @@ WORKDIR /app
 COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
 
 ENV PORT=8000
+ENV AWS_LWA_PORT=8000
+ENV AWS_LWA_INVOKE_MODE=response_stream
 
 COPY ./ ./
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=400 --retries=10 -r requirements.txt
+
 
 EXPOSE 8000
 

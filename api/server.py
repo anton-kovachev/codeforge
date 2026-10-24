@@ -36,12 +36,12 @@ async def root():
     return {"message": "DebugForge API", "agent": "debugforge-agent"}
 
 
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
 
 
-@app.post("/debug-code", response_class=EventSourceResponse)
+@app.post("/api/debug-code", response_class=EventSourceResponse)
 async def debug_code(
     request: DebugCodeRequest,
     creds: HTTPAuthorizationCredentials = Depends(clerk_guard),

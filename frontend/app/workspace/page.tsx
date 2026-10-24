@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { RedirectToSignIn, Show, useAuth } from "@clerk/nextjs";
+import { RedirectToSignIn, Show, useAuth } from "@clerk/react";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { Editor, DiffEditor } from "@monaco-editor/react";
 import type { TodoItem } from "./models";
@@ -13,8 +13,11 @@ import {
   type LanguageOption,
 } from "./utils";
 
+const SAMPLE_CODE =
+  "# Write your Python code here\n def divide(a: float, b: float) -> float:\n    return a % b";
+
 export default function Workspace() {
-  const [code, setCode] = useState("# Write your Python code here");
+  const [code, setCode] = useState(SAMPLE_CODE);
   const [language, setLanguage] = useState<LanguageOption>(languageOptions[0]);
   const [updatedCode, setUpdatedCode] = useState("");
   const [tests, setTests] = useState("# Optional test code here");
@@ -24,7 +27,7 @@ export default function Workspace() {
   const [testInstructions, setTestInstructions] = useState("");
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [isReviewing, setIsReviewing] = useState(false);
-  const [reviewError, setReviewError] = useState("");
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const todoListRef = useRef<HTMLUListElement>(null);
   const lastCompletedTodoRef = useRef<HTMLLIElement>(null);
   const handleCodeReviewRef = useRef<(() => Promise<void>) | null>(null);
@@ -38,10 +41,15 @@ export default function Workspace() {
   const sessionId = null;
 
   const { getToken, isLoaded } = useAuth();
-  const baseApiUrl = process.env.NEXT_PUBLIC_CODEFORGE_API_BASE_URL;
+  const baseApiUrl = `${process.env.NEXT_PUBLIC_CODEFORGE_API_BASE_URL?.replace(/\/+$/, "")}/api`;
+  console.log("Base API URL:", baseApiUrl);
 
   useEffect(() => {
-    setCode(`# Write your ${language.label} code here`);
+    if (language.value === "python") {
+      setCode(SAMPLE_CODE);
+    } else {
+      setCode(`# Write your ${language.label} code here`);
+    }
     setTests(`# Optional test code for ${language.label} here`);
   }, [language]);
 
@@ -96,6 +104,7 @@ export default function Workspace() {
     setIsReviewing(true);
     setTodos([]);
     setReviewError("");
+    setDescription("");
     let terminalEventReceived = false;
 
     try {
@@ -226,20 +235,28 @@ export default function Workspace() {
     handleCodeReviewRef.current = handleCodeReview;
   });
 
-  function handleAccept() {
+  function handleAcceptCode() {
     if (updatedCode) {
       setCode(updatedCode);
     }
+    setUpdatedCode("");
+    setDescription("");
+  }
+
+  function handleDeclineCode() {
+    setUpdatedCode("");
+    setDescription("");
+  }
+
+  function handleAcceptTests() {
     if (updatedTests) {
       setTests(updatedTests);
     }
-    setUpdatedCode("");
     setUpdatedTests("");
     setDescription("");
   }
 
-  function handleDecline() {
-    setUpdatedCode("");
+  function handleDeclineTests() {
     setUpdatedTests("");
     setDescription("");
   }
@@ -266,9 +283,34 @@ export default function Workspace() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-x-6 lg:gap-y-0 lg:grid-rows-[auto_auto_auto_auto_auto]">
+              {description && (updatedCode || updatedTests) && (
+                <aside
+                  aria-label="Summary of suggested changes"
+                  className="relative mb-6 rounded-2xl border border-indigo-200 bg-indigo-50 p-5 pr-14 shadow-sm sm:p-6 sm:pr-16"
+                  role="status"
+                >
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    What changed and why
+                  </h2>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {description}
+                  </p>
+                  <button
+                    aria-label="Close change summary"
+                    className="absolute right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-indigo-100 hover:text-slate-900 focus:outline-none focus:ring-4 focus:ring-indigo-300/40"
+                    onClick={() => setDescription("")}
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="text-2xl leading-none">
+                      ×
+                    </span>
+                  </button>
+                </aside>
+              )}
+
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-x-6 lg:gap-y-0 lg:grid-rows-[auto_auto_auto]">
                 <div className="contents">
-                  <section className="order-1 flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-indigo-950/5 lg:col-start-1 lg:row-start-1 lg:mb-6">
+                  <section className="order-1 flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-indigo-950/5 lg:col-start-1 lg:row-start-1 lg:mb-8">
                     <div className="flex h-24 items-center justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">
@@ -280,7 +322,25 @@ export default function Workspace() {
                             : "Your source code"}
                         </h2>
                       </div>
-                      <div className="flex flex-wrap items-center justify-end gap-3">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {updatedCode && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleAcceptCode}
+                              className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-green-600 px-3 text-sm font-semibold text-white transition hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-300/40"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleDeclineCode}
+                              className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-red-500 px-3 text-sm font-semibold text-black transition hover:bg-red-600 focus:outline-none focus:ring-4 focus:ring-red-300/40"
+                            >
+                              Decline
+                            </button>
+                          </>
+                        )}
                         <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
                           <span>Language</span>
                           <select
@@ -349,49 +409,7 @@ export default function Workspace() {
                         : "Edit the starter code or paste in the code you want reviewed."}
                     </p>
                   </section>
-                  {(updatedCode || updatedTests) && (
-                    <div className="order-3 flex items-center justify-start gap-4 lg:col-start-1 lg:row-start-2 lg:mb-6">
-                      <button
-                        type="button"
-                        onClick={handleAccept}
-                        className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-green-600 px-5 text-sm font-semibold text-white transition hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-300/40"
-                      >
-                        Accept
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleDecline}
-                        className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-red-500 px-5 text-sm font-semibold text-black transition hover:bg-red-600 focus:outline-none focus:ring-4 focus:ring-red-300/40"
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  )}
-                  {description && (
-                    <div className="order-4 grid grid-cols-1 gap-6 md:grid-cols-1 lg:col-start-1 lg:row-start-3 lg:mb-6">
-                      <section className="order-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-indigo-950/5 sm:p-6 lg:col-start-1 lg:row-start-4 lg:mb-6">
-                        <label
-                          htmlFor="description"
-                          className="block text-lg font-semibold text-slate-900"
-                        >
-                          Code description
-                        </label>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">
-                          Describe what the code is intended to do.
-                        </p>
-                        <textarea
-                          id="description"
-                          value={description}
-                          onChange={(e) => setDescription(e.target.value)}
-                          placeholder="CodeForge's detailed description over the updated code"
-                          rows={4}
-                          readOnly={true}
-                          className="mt-4 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
-                        />
-                      </section>
-                    </div>
-                  )}
-                  <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-indigo-950/5 sm:p-6">
+                  <section className="order-3 rounded-2xl border border-slate-200 bg-white p-5 mt-5 gap-4 shadow-sm shadow-indigo-950/5 sm:p-6 lg:col-start-1 lg:row-start-2 lg:mb-6">
                     <label
                       htmlFor="instructions"
                       className="block text-lg font-semibold text-slate-900"
@@ -413,7 +431,7 @@ export default function Workspace() {
                       className="mt-4 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
                     />
                   </section>
-                  <div className="order-7 flex flex-col items-start justify-between gap-4 rounded-2xl bg-slate-950 px-5 py-5 text-white sm:flex-row sm:items-center sm:px-7 lg:col-start-1 lg:row-start-5">
+                  <div className="order-5 flex flex-col items-start justify-between gap-4 rounded-2xl bg-slate-950 px-5 py-5 text-white sm:flex-row sm:items-center sm:px-7 lg:col-start-1 lg:row-start-3">
                     <div>
                       <h2 className="text-lg font-semibold">
                         Ready for a review?
@@ -438,19 +456,35 @@ export default function Workspace() {
                 </div>
 
                 <div className="contents">
-                  <section className="order-2 flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-indigo-950/5 lg:col-start-2 lg:row-start-1 lg:mb-6">
+                  <section className="order-2 flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-indigo-950/5 lg:col-start-2 lg:row-start-1 lg:mb-8">
                     <div className="flex h-24 items-center justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">
                           Optional
                         </p>
                         <h2 className="mt-1 text-lg font-semibold text-slate-900">
-                          {updatedTests
-                            ? "Review test changes"
-                            : "Existing tests"}
+                          {updatedTests ? "Review test changes" : "Write tests"}
                         </h2>
                       </div>
-                      <div className="flex flex-wrap items-center justify-end gap-3">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {updatedTests && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleAcceptTests}
+                              className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-green-600 px-3 text-sm font-semibold text-white transition hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-300/40"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleDeclineTests}
+                              className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg bg-red-500 px-3 text-sm font-semibold text-black transition hover:bg-red-600 focus:outline-none focus:ring-4 focus:ring-red-300/40"
+                            >
+                              Decline
+                            </button>
+                          </>
+                        )}
                         <p className="text-right text-sm font-medium text-slate-600">
                           Language:{" "}
                           <span className="font-semibold text-slate-900">
@@ -505,7 +539,7 @@ export default function Workspace() {
                     </p>
                   </section>
 
-                  <section className="order-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm shadow-indigo-950/5 sm:p-6 lg:col-start-2 lg:row-start-4 lg:mb-6">
+                  <section className="order-4 rounded-2xl mt-5 gap-4 border border-slate-200 bg-white p-5 shadow-sm shadow-indigo-950/5 sm:p-6 lg:col-start-2 lg:row-start-2 lg:mb-6">
                     <label
                       htmlFor="test-instructions"
                       className="block text-lg font-semibold text-slate-900"
@@ -530,7 +564,7 @@ export default function Workspace() {
                     />
                   </section>
 
-                  <div className="order-8 flex flex-col items-start justify-between gap-4 rounded-2xl bg-slate-950 px-5 py-5 text-white sm:flex-row sm:items-center sm:px-7 lg:col-start-2 lg:row-start-5">
+                  <div className="order-6 flex flex-col items-start justify-between gap-4 rounded-2xl bg-slate-950 px-5 py-5 text-white sm:flex-row sm:items-center sm:px-7 lg:col-start-2 lg:row-start-3">
                     <div>
                       <h2 className="text-lg font-semibold">Ready to test?</h2>
                       <p className="mt-1 text-sm text-slate-300">
@@ -641,20 +675,16 @@ export default function Workspace() {
               {reviewError && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
                   <section
-                    aria-labelledby="review-progress-title"
+                    aria-labelledby="review-error-title"
                     aria-modal="true"
                     className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl"
                     role="dialog"
                   >
                     <div className="flex items-start gap-4">
-                      <span
-                        aria-hidden="true"
-                        className="mt-1 h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent"
-                      />
                       <div>
                         <h2
-                          className="text-xl font-semibold text-slate-900"
-                          id="review-progress-title"
+                          className="text-xl font-semibold text-slate-900 text-red-600"
+                          id="review-error-title"
                         >
                           An error occurred
                         </h2>
@@ -662,6 +692,12 @@ export default function Workspace() {
                           {reviewError}
                         </p>
                       </div>
+                      <button
+                        onClick={() => setReviewError(null)}
+                        className="ml-auto rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700"
+                      >
+                        Ok
+                      </button>
                     </div>
                   </section>
                 </div>

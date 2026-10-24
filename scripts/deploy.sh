@@ -5,8 +5,10 @@ ENVIRONMENT=${1:-development}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 TERRAFORM_ROOT="$PROJECT_ROOT/terraform"
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
 AWS_REGION=${AWS_REGION:-${DEFAULT_AWS_REGION:-eu-north-1}}
 export AWS_REGION
+CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY:-${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-${VITE_CLERK_PUBLISHABLE_KEY:-}}}
 
 if [[ -z "${TF_VAR_aws_bearer_token_bedrock:-${AWS_BEARER_TOKEN_BEDROCK:-}}" ]]; then
   echo "Set TF_VAR_aws_bearer_token_bedrock or AWS_BEARER_TOKEN_BEDROCK before deploying." >&2
@@ -14,6 +16,10 @@ if [[ -z "${TF_VAR_aws_bearer_token_bedrock:-${AWS_BEARER_TOKEN_BEDROCK:-}}" ]];
 fi
 if [[ -z "${TF_VAR_clerk_jwks_url:-${CLERK_JWKS_URL:-}}" ]]; then
   echo "Set TF_VAR_clerk_jwks_url or CLERK_JWKS_URL before deploying." >&2
+  exit 1
+fi
+if [[ -z "$CLERK_PUBLISHABLE_KEY" ]]; then
+  echo "Set CLERK_PUBLISHABLE_KEY before deploying the frontend." >&2
   exit 1
 fi
 
@@ -61,15 +67,20 @@ apply_phase "$TERRAFORM_ROOT/api" \
   -var="agent_endpoint_name=$AGENT_ENDPOINT_NAME"
 API_FUNCTION_URL=$(terraform output -raw api_function_url)
 
-echo "Deploying React frontend ($ENVIRONMENT)..."
-FRONTEND_BUILD_ENV="{ VITE_API_URL = \"$API_FUNCTION_URL\" }"
-if [[ -n "${VITE_CLERK_PUBLISHABLE_KEY:-}" ]]; then
-  FRONTEND_BUILD_ENV="{ VITE_API_URL = \"$API_FUNCTION_URL\", VITE_CLERK_PUBLISHABLE_KEY = \"$VITE_CLERK_PUBLISHABLE_KEY\" }"
-fi
-apply_phase "$TERRAFORM_ROOT/frontend" \
-  -var="build_env=$FRONTEND_BUILD_ENV"
+echo "Provisioning frontend hosting ($ENVIRONMENT)..."
+apply_phase "$TERRAFORM_ROOT/frontend"
+FRONTEND_BUCKET=$(terraform output -raw frontend_bucket_name)
 FRONTEND_URL=$(terraform output -raw frontend_website_url)
+
+echo "Building frontend for API $API_FUNCTION_URL..."
+pnpm --dir "$FRONTEND_DIR" install --frozen-lockfile
+NEXT_PUBLIC_CODEFORGE_API_BASE_URL="$API_FUNCTION_URL" \
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="$CLERK_PUBLISHABLE_KEY" \
+  pnpm --dir "$FRONTEND_DIR" run build
+
+echo "Uploading frontend to s3://$FRONTEND_BUCKET..."
+aws s3 sync "$FRONTEND_DIR/out/" "s3://$FRONTEND_BUCKET/" --region "$AWS_REGION" --delete
+echo "Frontend URL: $FRONTEND_URL"
 
 echo "Deployment complete."
 echo "API URL:      $API_FUNCTION_URL"
-echo "Frontend URL: $FRONTEND_URL"
