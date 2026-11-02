@@ -1,9 +1,11 @@
 import json
 import os
 import uuid
+from contextlib import ExitStack, nullcontext
 from typing import Any
 
 from agent_hook_handler import AgentHookHandler
+from agents import custom_span, set_tracing_export_api_key, trace
 from aws_bedrock_token_generator import provide_token
 from bedrock_agentcore import BedrockAgentCoreApp
 from dotenv import load_dotenv
@@ -12,8 +14,12 @@ from event_helpers import (
     is_tool_call_result_event,
 )
 from input_guardrail import CodeInputRejected, extract_code_input, validate_code_input
+from mcp_servers import get_agent_mcp_servers, get_pr_review_mcp_servers
 from memory import configure_memory_session_manager
 from output_models.debug_code import DebuggedCodeOutput
+from output_models.pr_review import PRReviewOutput
+from prompts import DEBUG_AND_TEST_CODE_SYSTEM_PROMPT, PR_REVIEW_SYSTEM_PROMPT
+from review_tools import create_pr_review_todo_tools
 from strands import Agent
 from strands.models.openai import OpenAIModel
 from tools import (
@@ -25,11 +31,14 @@ from tools import (
     mark_complete_todo,
     run_tests,
 )
-from contextlib import ExitStack
-
-from mcp_servers import get_agent_mcp_servers
 
 load_dotenv(override=True)
+
+OPENAI_TRACING_ENABLED = bool(os.environ.get("OPENAI_KEY"))
+if OPENAI_TRACING_ENABLED:
+    set_tracing_export_api_key(os.environ["OPENAI_KEY"])
+else:
+    print("OpenAI tracing disabled: OPENAI_KEY is not configured")
 
 REGION = os.environ.get("AWS_REGION", "eu-north-1")
 
@@ -43,28 +52,6 @@ model = OpenAIModel(
     params={"max_tokens": 4096, "temperature": 0.7},
 )
 
-system_prompt = """
-You are DebugForge, an AI agent that runs, tests, and debugs code snippets submitted by users.
-You plan your work with your todo tools, then carry out each step in turn.
-
-You have access to:
-- execute_code: run a snippet of code in a sandboxed interpreter tool and observe its output or errors.
-- run_tests via execute_code: write source code and test code into the sandbox and execute the test suite against it using the execute_code tool.
-
-Your plan should typically include, as separate todos:
-1. Reviewing the code to understand what it is meant to do.
-2. Writing Python code to execute the snippet as-is and observe its behavior or errors (prefix this todo with "Write Python code to...").
-3. Writing tests for the code if none were supplied, or using the supplied tests.
-4. Writing Python code to run the tests and observe which pass or fail (prefix this todo with "Write Python code to...").
-5. Fixing any bugs found, then re-running the code and tests to confirm the fix, repeating until everything passes.
-6. If supplied tests needed changes, preserve them in the `tests` output field and provide the complete revised test code in `updated_tests`. Otherwise set `updated_tests` to null. If no tests were supplied, provide the generated tests in `tests` and set `updated_tests` to null.
-7. Reporting back the final, corrected code together with a clear explanation of what was wrong and what you changed.
-
-Now use the todo list tools, create a plan, carry out the steps, and reply with the solution. 
-Update the todo list on each step by tracking the todo's state and marking each todo from pending to in progress to completed until are todos are completed and the task is finished.
-Track any todo that requires debugging code, running code or executing tests over the code via execute_code.
-Always report (list todos) the todo states after update, including which are pending, in progress, and completed.
-"""
 
 tools = [
     get_todo_report,
@@ -77,6 +64,16 @@ tools = [
 app = BedrockAgentCoreApp()
 
 
+def _trace_context(workflow: str, session_id: str):
+    if not OPENAI_TRACING_ENABLED:
+        return nullcontext()
+    return trace(
+        workflow_name=f"DebugForge {workflow}",
+        group_id=session_id,
+        metadata={"workflow": workflow},
+    )
+
+
 @app.entrypoint
 async def invoke(payload, context):
     """Our Agent function"""
@@ -84,6 +81,46 @@ async def invoke(payload, context):
     session_id = context.session_id or str(uuid.uuid4())
     print(f"Session ID: {session_id}")
     actor_id = payload.get("actor_id", "default")
+
+    workflow = payload.get("workflow", "debug")
+    if workflow == "pr_review":
+        invoke_workflow = _invoke_pr_review(payload, user_message, session_id)
+    elif workflow == "debug":
+        invoke_workflow = _invoke_debug(payload, session_id, actor_id)
+    else:
+        yield json.dumps({"error": f"Unknown workflow: {workflow}"})
+        return
+
+    async for event in invoke_workflow:
+        yield event
+
+
+async def _invoke_debug(payload, session_id, actor_id):
+    trace_data = {
+        "workflow": "debug",
+        "session_id": session_id,
+        "status": "running",
+    }
+    with _trace_context("debug", session_id):
+        trace_span = (
+            custom_span("Strands workflow", data=trace_data)
+            if OPENAI_TRACING_ENABLED
+            else nullcontext()
+        )
+        with trace_span:
+            try:
+                async for event in _run_debug_workflow(payload, session_id, actor_id):
+                    yield event
+            except Exception:
+                trace_data["status"] = "error"
+                raise
+            else:
+                trace_data["status"] = "completed"
+
+
+async def _run_debug_workflow(payload, session_id, actor_id):
+    """Run the existing debug, test, and improve workflow."""
+    user_message = payload.get("prompt")
     clear_todos()
 
     code = payload.get("code")
@@ -110,11 +147,14 @@ async def invoke(payload, context):
         [agent_tools.extend(mcp_server.list_tools_sync()) for mcp_server in mcp_servers]
         agent = Agent(
             model=model,
-            system_prompt=system_prompt,
+            system_prompt=DEBUG_AND_TEST_CODE_SYSTEM_PROMPT,
             tools=tools + agent_tools,
             # session_manager=configure_memory_session_manager(session_id, actor_id),
         )
-        hook_handler = AgentHookHandler(session_id=session_id)
+        hook_handler = AgentHookHandler(
+            session_id=session_id,
+            tracing_enabled=OPENAI_TRACING_ENABLED,
+        )
         hook_handler.register(agent)
 
         stream = agent.stream_async(
@@ -141,6 +181,112 @@ async def invoke(payload, context):
 
         if structured_output is None:
             raise RuntimeError("Agent completed without producing structured output")
+        yield structured_output.model_dump_json()
+
+
+async def _invoke_pr_review(payload, user_message, session_id):
+    trace_data = {
+        "workflow": "pr_review",
+        "session_id": session_id,
+        "status": "running",
+    }
+    with _trace_context("pr_review", session_id):
+        trace_span = (
+            custom_span("Strands workflow", data=trace_data)
+            if OPENAI_TRACING_ENABLED
+            else nullcontext()
+        )
+        with trace_span:
+            try:
+                async for event in _run_pr_review_workflow(
+                    payload,
+                    user_message,
+                    session_id,
+                ):
+                    yield event
+            except Exception:
+                trace_data["status"] = "error"
+                raise
+            else:
+                trace_data["status"] = "completed"
+
+
+async def _run_pr_review_workflow(payload, user_message, session_id):
+    """Run the isolated PR review workflow and stream todo and structured result events."""
+    project = payload.get("project") or payload.get("repository")
+    repository_id = payload.get("repository_id")
+    pull_request = payload.get("pull_request_number") or payload.get("pr_number")
+    pull_request_id = payload.get("pull_request_id")
+    issue_number = payload.get("issue_number")
+    issue_id = payload.get("issue_id")
+    focus = payload.get("focus")
+
+    review_prompt_parts = [
+        "Review the GitHub pull request for the supplied project.",
+        f"Project/repository: {project}" if project else "",
+        f"Repository ID: {repository_id}" if repository_id else "",
+        f"Pull request: {pull_request}" if pull_request else "",
+        f"Pull request ID: {pull_request_id}" if pull_request_id else "",
+        (
+            f"Related issue: #{issue_number} (ID {issue_id})"
+            if issue_number and issue_id
+            else ""
+        ),
+        f"Review focus: {focus}" if focus else "",
+        f"Additional request: {user_message}" if user_message else "",
+        "Use the connected GitHub MCP tools to identify and inspect the PR.",
+    ]
+    review_request = "\n".join(part for part in review_prompt_parts if part)
+
+    with ExitStack() as stack:
+        mcp_servers = [
+            stack.enter_context(mcp_server)
+            for mcp_server in get_pr_review_mcp_servers()
+        ]
+        github_tools = [
+            tool for mcp_server in mcp_servers for tool in mcp_server.list_tools_sync()
+        ]
+        review_todo_tools = create_pr_review_todo_tools()
+        agent = Agent(
+            model=model,
+            system_prompt=PR_REVIEW_SYSTEM_PROMPT,
+            tools=review_todo_tools + github_tools,
+        )
+        hook_handler = AgentHookHandler(
+            session_id=session_id,
+            tracing_enabled=OPENAI_TRACING_ENABLED,
+            todo_tool_names=(
+                "list_pr_review_todos",
+                "create_pr_review_todos",
+                "mark_complete_pr_review_todo",
+            ),
+        )
+        hook_handler.register(agent)
+
+        structured_output: PRReviewOutput | None = None
+        async for event in agent.stream_async(
+            review_request,
+            structured_output_model=PRReviewOutput,
+            limits={
+                "turns": 30,
+                # "output_tokens": 2000,
+                "structured_output_attempts": 3,
+            },
+        ):
+            tool_call_id = is_tool_call_result_event(event)
+            if tool_call_id:
+                todo_tool_call = get_todo_for_tool_call_id(
+                    tool_call_id,
+                    hook_handler.todo_tool_calls,
+                )
+                if todo_tool_call is not None:
+                    yield hook_handler.todo_report.model_dump_json()
+
+            if "structured_output" in event:
+                structured_output = event["structured_output"]
+
+        if structured_output is None:
+            raise RuntimeError("PR review agent completed without structured output")
         yield structured_output.model_dump_json()
 
 

@@ -36,3 +36,15 @@ variable "aws_bearer_token_bedrock" {
   description = "The AWS bearer token for Bedrock"
   type        = string
 }
+
+variable "github_mcp_token" {
+  description = "GitHub MCP token used to authenticate requests to the GitHub API"
+  type        = string
+  sensitive   = true
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API key used to authenticate requests to the OpenAI API"
+  type        = string
+  sensitive   = true
+}

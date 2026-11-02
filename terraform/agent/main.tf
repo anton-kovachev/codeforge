@@ -11,7 +11,10 @@ locals {
     ManagedBy   = "terraform"
   }
 
-  app_hash = filebase64sha256("${var.app_dir}/Dockerfile")
+  app_files = [for f in fileset(var.app_dir, "**") : f
+    if !startswith(f, ".venv/") && !startswith(f, "__pycache__/") && !endswith(f, ".pyc") && f != ".env" && !startswith(f, ".git/")
+  ]
+  app_hash = substr(sha256(join("", [for f in sort(local.app_files) : filesha256("${var.app_dir}/${f}")])), 0, 16)
 }
 
 resource "aws_iam_role" "bedrock_agentcore_runtime_role" {
@@ -240,6 +243,8 @@ resource "aws_bedrockagentcore_agent_runtime" "bedrock_agentcore_runtime" {
 
   environment_variables = {
     AWS_BEARER_TOKEN_BEDROCK = var.aws_bearer_token_bedrock
+    GITHUB_MCP_TOKEN         = var.github_mcp_token
+    OPENAI_API_KEY           = var.openai_api_key
   }
 
   tags       = local.common_tags
@@ -247,10 +252,10 @@ resource "aws_bedrockagentcore_agent_runtime" "bedrock_agentcore_runtime" {
 }
 
 resource "aws_bedrockagentcore_agent_runtime_endpoint" "bedrock_agentcore_runtime_endpoint" {
-  name             = "${local.agentcore_runtime_name_prefix}_endpoint"
-  agent_runtime_id = aws_bedrockagentcore_agent_runtime.bedrock_agentcore_runtime.agent_runtime_id
-  description      = "Endpoint for agent runtime communication"
-
+  name                  = "${local.agentcore_runtime_name_prefix}_endpoint"
+  agent_runtime_id      = aws_bedrockagentcore_agent_runtime.bedrock_agentcore_runtime.agent_runtime_id
+  agent_runtime_version = aws_bedrockagentcore_agent_runtime.bedrock_agentcore_runtime.agent_runtime_version
+  description           = "Endpoint for agent runtime communication"
 
   tags       = local.common_tags
   depends_on = [aws_bedrockagentcore_agent_runtime.bedrock_agentcore_runtime]

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import HowItWorksTabs from "./components/how-it-works-tabs";
 
 const features = [
   {
@@ -21,6 +22,33 @@ const features = [
   },
 ];
 
+const prReviewSteps = [
+  {
+    number: "01",
+    title: "Choose a project",
+    description:
+      "Search for a GitHub user or organization and browse its repositories, or search for a repository directly. The GitHub connection stays on the server.",
+  },
+  {
+    number: "02",
+    title: "Find the pull request",
+    description:
+      "Search by PR title or number. Open pull requests are shown by default, with the ten most recently updated first. Switch to Open & closed to include merged and closed PRs.",
+  },
+  {
+    number: "03",
+    title: "Review with context",
+    description:
+      "The reviewer inspects the PR metadata and full diff, then checks relevant source, callers, tests, and repository guidance. Add an optional focus to direct attention to a particular risk.",
+  },
+  {
+    number: "04",
+    title: "See actionable findings",
+    description:
+      "Each finding includes a severity, exact repository-relative file path, explanation, and side-by-side code suggestion you can copy. Confirmed findings may also be posted as GitHub review comments; CodeForge never approves or merges the PR.",
+  },
+];
+
 export default function Home() {
   return (
     <main className="flex-1 bg-[#f7f8fc] text-slate-950">
@@ -37,9 +65,9 @@ export default function Home() {
             </span>
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-8 text-slate-600 sm:text-xl">
-            CodeForge helps you write, understand, and debug code with AI.
-            Spend less time stuck on errors and more time bringing good ideas to
-            life.
+            CodeForge helps you write, understand, and debug code, and review
+            GitHub pull requests with AI. Spend less time stuck on errors and
+            more time bringing good ideas to life.
           </p>
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
             <Link
@@ -48,6 +76,13 @@ export default function Home() {
             >
               Start building
               <span aria-hidden="true">→</span>
+            </Link>
+            <Link
+              href="/pr-review"
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-violet-200 bg-white px-6 text-sm font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-50"
+            >
+              Review a pull request
+              <span aria-hidden="true">↗</span>
             </Link>
             <a
               href="#how-it-works"
@@ -164,27 +199,14 @@ export default function Home() {
             </h2>
             <p className="mt-4 text-base leading-7 text-slate-600">
               Whether you’re starting fresh or chasing down a tricky bug,
-              CodeForge is here to help you find your next step.
+              CodeForge is here to help you find your next step, or understand
+              the risks in a pull request before it ships.
             </p>
           </div>
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {features.map((feature) => (
-              <article
-                key={feature.number}
-                className="rounded-xl border border-slate-200 bg-[#f7f8fc] p-6"
-              >
-                <span className="font-mono text-sm font-semibold text-indigo-600">
-                  {feature.number}
-                </span>
-                <h3 className="mt-5 text-lg font-semibold text-slate-900">
-                  {feature.title}
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-slate-600">
-                  {feature.description}
-                </p>
-              </article>
-            ))}
-          </div>
+          <HowItWorksTabs
+            features={features}
+            prReviewSteps={prReviewSteps}
+          />
           <div className="mt-10 flex flex-col items-start justify-between gap-5 rounded-2xl bg-slate-950 px-6 py-7 text-white sm:flex-row sm:items-center sm:px-8">
             <div>
               <h3 className="text-xl font-semibold">Ready to get unstuck?</h3>

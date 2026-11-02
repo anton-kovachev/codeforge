@@ -1,6 +1,6 @@
 # debugforge-agent
 
-An AWS Bedrock AgentCore agent that **runs, tests, and debugs** code snippets.
+An AWS Bedrock AgentCore agent with separate workflows to **debug code** and **review GitHub pull requests**.
 
 It is built the same way as the `finale` agent in the `production` repo:
 - [`BedrockAgentCoreApp`](https://github.com/aws/bedrock-agentcore-sdk-python) as the runtime wrapper
@@ -17,6 +17,21 @@ Given a code snippet (and optionally some tests), the agent:
 4. Iterates on bugs it finds, re-running the code/tests until they pass.
 5. Returns a structured result with the original code and tests, optional updated code and tests when changed, and a detailed explanation of the issues and fixes.
 
+For pull request reviews, it uses a dedicated reviewer agent and GitHub MCP tools to inspect
+the selected repository and PR. It returns a structured summary, actionable findings with
+the exact repository-relative path, suggested code and optional tests, and a pass/fail
+verdict. The GitHub MCP server is only opened for this workflow; configure `GITHUB_MCP_TOKEN`
+in the agent environment.
+
+## OpenAI trace export
+
+Set `OPENAI_KEY` in the agent's `.env` to export workflow traces to the
+[OpenAI Traces dashboard](https://platform.openai.com/traces). The agent still runs on Strands
+with its configured Bedrock model; this does not convert it into an OpenAI Agents SDK agent.
+Traces include workflow/session identifiers and model/tool call names, counts, and outcomes.
+They intentionally exclude prompts, source code, PR content, and tool inputs/outputs. If
+`OPENAI_KEY` is unset, trace export is disabled.
+
 ## Tools
 
 - `execute_code(code, language="python")` - runs a snippet in the sandbox and returns its output.
@@ -25,7 +40,8 @@ Given a code snippet (and optionally some tests), the agent:
 
 ## Local setup
 
-1. Copy `.env.example` to `.env` and fill in your AWS Bedrock bearer token / region / model id:
+1. Copy `.env.example` to `.env` and fill in your AWS Bedrock bearer token / region / model id.
+   Set `OPENAI_KEY` only if you want OpenAI trace export:
    ```
    cp .env.example .env
    ```
@@ -42,6 +58,12 @@ Given a code snippet (and optionally some tests), the agent:
    curl -X POST http://localhost:8080/invocations \
      -H "Content-Type: application/json" \
      -d '{"prompt": "Run, test, and debug this code.", "language": "python", "code": "def add(a, b):\n    return a - b"}'
+   ```
+5. To invoke a PR review, pass the workflow and repository/PR:
+   ```
+   curl -X POST http://localhost:8080/invocations \
+     -H "Content-Type: application/json" \
+     -d '{"workflow": "pr_review", "project": "owner/repository", "pull_request_number": 123}'
    ```
 
 ## Deploy to AWS Bedrock AgentCore

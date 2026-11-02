@@ -11,7 +11,7 @@ ENV AWS_LWA_INVOKE_MODE=response_stream
 
 COPY ./ ./
 
-RUN pip install --no-cache-dir --timeout=400 --retries=10 -r requirements.txt
+RUN pip install --no-cache-dir --timeout=800 --retries=10 -r requirements.txt
 
 
 EXPOSE 8000

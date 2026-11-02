@@ -58,19 +58,17 @@ charset-normalizer==3.5.2
 click==8.5.0
     # via uvicorn
 colorama==0.4.6 ; sys_platform == 'win32'
-    # via
-    #   tqdm
-    #   typer
+    # via typer
 cryptography==50.0.2
     # via pyjwt
-distro==1.9.0
-    # via openai
 docstring-parser==0.18.0
     # via
     #   bedrock-agentcore-starter-toolkit
     #   strands-agents
 dotenv==0.9.9
     # via debugforge-agent
+griffelib==2.4.1
+    # via openai-agents
 h11==0.16.0
     # via
     #   httpcore
@@ -83,10 +81,12 @@ httpcore2==2.13.1 ; sys_platform != 'emscripten'
 httpx==0.28.1
     # via
     #   bedrock-agentcore-starter-toolkit
-    #   openai
     #   strands-agents
 httpx2==2.13.1
-    # via mcp
+    # via
+    #   mcp
+    #   openai
+    #   openai-agents
 httpx2-jsfetch==1.0 ; sys_platform == 'emscripten'
     # via httpx2
 idna==3.20
@@ -124,15 +124,19 @@ markupsafe==3.0.4
 mcp==2.1.1
     # via
     #   debugforge-agent
+    #   openai-agents
     #   strands-agents
 mcp-types==2.1.1
     # via mcp
 mdurl==0.1.2
     # via markdown-it-py
-openai==2.54.0
+openai==3.42.0
     # via
     #   debugforge-agent
+    #   openai-agents
     #   strands-agents
+openai-agents==0.24.0
+    # via debugforge-agent
 openapi-schema-validator==0.9.0
     # via openapi-spec-validator
 openapi-spec-validator==0.9.0
@@ -181,6 +185,7 @@ pydantic==2.14.1
     #   mcp
     #   mcp-types
     #   openai
+    #   openai-agents
     #   openapi-schema-validator
     #   openapi-spec-validator
     #   pydantic-settings
@@ -194,7 +199,9 @@ pydantic-settings==2.15.0
 pygments==2.21.0
     # via rich
 pyjwt==2.15.1
-    # via mcp
+    # via
+    #   mcp
+    #   openai-agents
 python-dateutil==2.9.0.post0
     # via botocore
 python-dotenv==1.2.4
@@ -202,7 +209,9 @@ python-dotenv==1.2.4
     #   dotenv
     #   pydantic-settings
 python-multipart==0.0.32
-    # via mcp
+    # via
+    #   mcp
+    #   openai-agents
 pywin32==312 ; sys_platform == 'win32'
     # via mcp
 pyyaml==6.0.3
@@ -221,6 +230,7 @@ referencing==0.37.0
 requests==2.34.2
     # via
     #   bedrock-agentcore-starter-toolkit
+    #   openai-agents
     #   prance
 rfc3339-validator==0.1.4
     # via openapi-schema-validator
@@ -253,13 +263,12 @@ starlette==1.7.0
     #   bedrock-agentcore
     #   bedrock-agentcore-starter-toolkit
     #   mcp
+    #   openai-agents
     #   sse-starlette
-strands-agents==1.59.0
+strands-agents==1.63.0
     # via debugforge-agent
 toml==0.10.2
     # via bedrock-agentcore-starter-toolkit
-tqdm==4.70.1
-    # via openai
 truststore==0.10.4 ; sys_platform != 'emscripten'
     # via
     #   httpcore2
@@ -275,6 +284,7 @@ typing-extensions==4.16.0
     #   mcp
     #   mcp-types
     #   openai
+    #   openai-agents
     #   opentelemetry-api
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
@@ -294,6 +304,7 @@ urllib3==2.8.0
     #   bedrock-agentcore
     #   bedrock-agentcore-starter-toolkit
     #   botocore
+    #   openai-agents
     #   requests
 uvicorn==0.54.0
     # via
@@ -304,8 +315,10 @@ watchdog==6.0.0
     # via strands-agents
 wcwidth==0.9.2
     # via prompt-toolkit
-websockets==17.2
-    # via bedrock-agentcore
+websockets==16.1.1
+    # via
+    #   bedrock-agentcore
+    #   openai-agents
 wrapt==2.5.0
     # via
     #   opentelemetry-instrumentation
