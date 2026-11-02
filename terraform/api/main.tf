@@ -36,7 +36,7 @@ resource "null_resource" "build_and_push_app_image" {
     working_dir = path.module
     command     = <<-EOT
       set -euo pipefail
-      docker build --progress=plain -t ${aws_ecr_repository.api.name}:${local.app_hash} ${var.app_dir} --provenance false --platform linux/amd64 --no-cache
+      docker buildx build --progress=plain --network host --allow network.host --load -t ${aws_ecr_repository.api.name}:${local.app_hash} ${var.app_dir} --provenance false --platform linux/amd64 --no-cache
       aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${local.registry}
       docker tag ${aws_ecr_repository.api.name}:${local.app_hash} ${local.image_uri}
       docker push ${local.image_uri}
@@ -116,6 +116,7 @@ resource "aws_lambda_function" "api" {
       AGENT_ENDPOINT_NAME          = var.agent_endpoint_name
       CORS_ORIGINS                 = var.cors_origins
       CLERK_JWKS_URL               = var.clerk_jwks_url
+      GITHUB_API_TOKEN             = var.github_api_token
       AWS_LWA_INVOKE_MODE          = "response_stream"
       AWS_LWA_PORT                 = "8000"
       AWS_LWA_READINESS_CHECK_PATH = "/api/health"

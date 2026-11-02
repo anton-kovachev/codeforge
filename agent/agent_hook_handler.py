@@ -1,5 +1,6 @@
 from typing import Any
 from pydantic import ValidationError
+from agents import custom_span
 from strands import Agent
 from strands.hooks import (
     BeforeToolCallEvent,
@@ -14,13 +15,33 @@ from tools import ToDoReport
 
 
 class AgentHookHandler:
-    def __init__(self, session_id: str):
+    def __init__(
+        self,
+        session_id: str,
+        tracing_enabled: bool = False,
+        todo_tool_names: tuple[str, ...] = (
+            "list_todos",
+            "create_todos",
+            "mark_complete_todo",
+        ),
+    ):
         self.session_id = session_id
+        self.tracing_enabled = tracing_enabled
+        self.todo_tool_names = set(todo_tool_names)
         self.todo_tool_calls = []
         self.model_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
+        self._model_spans: list[tuple[Any, dict[str, Any]]] = []
+        self._tool_spans: dict[str, tuple[Any, dict[str, Any]]] = {}
         self.todo_report: ToDoReport = ToDoReport(todos=[], report="")
+
+    def _start_trace_span(self, name: str, data: dict[str, Any]):
+        if not self.tracing_enabled:
+            return None
+        span = custom_span(name, data=data)
+        span.start(mark_as_current=True)
+        return span
 
     # ── Invocation boundaries ───────────────────────────────────────────────
     def on_before_invocation(self, event: BeforeInvocationEvent):
@@ -32,15 +53,38 @@ class AgentHookHandler:
     # ── Model call boundaries ───────────────────────────────────────────────
     def on_before_model_call(self, event: BeforeModelCallEvent):
         self.model_calls += 1
+        span_data: dict[str, Any] = {"call_number": self.model_calls}
+        span = self._start_trace_span("Strands model call", span_data)
+        if span is not None:
+            self._model_spans.append((span, span_data))
 
     def on_after_model_call(self, event: AfterModelCallEvent):
-        pass
+        if self._model_spans:
+            span, span_data = self._model_spans.pop()
+            span_data["status"] = "error" if event.exception else "ok"
+            span.finish(reset_current=True)
 
     # ── Tool call boundaries ────────────────────────────────────────────────
     def on_before_tool_call(self, event: BeforeToolCallEvent):
-        pass
+        tool_use_id = event.tool_use.get("toolUseId")
+        if not event.selected_tool or not isinstance(tool_use_id, str):
+            return
+
+        span_data: dict[str, Any] = {
+            "tool_name": event.selected_tool.tool_name,
+        }
+        span = self._start_trace_span("Strands tool call", span_data)
+        if span is not None:
+            self._tool_spans[tool_use_id] = (span, span_data)
 
     def on_after_tool_call(self, event: AfterToolCallEvent):
+        tool_use_id = event.tool_use.get("toolUseId")
+        if isinstance(tool_use_id, str):
+            span_entry = self._tool_spans.pop(tool_use_id, None)
+            if span_entry is not None:
+                span, span_data = span_entry
+                span_data["status"] = "error" if event.exception else "ok"
+                span.finish(reset_current=True)
 
         if event.selected_tool:
             tool_name = event.selected_tool.tool_name
@@ -53,7 +97,7 @@ class AgentHookHandler:
                 else False
             )
 
-            if tool_name in ["list_todos", "create_todos", "mark_complete_todo"]:
+            if tool_name in self.todo_tool_names:
                 # Extract the result text
                 try:
                     result_content = event.result.get("content", [])

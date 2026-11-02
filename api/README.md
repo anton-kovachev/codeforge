@@ -1,7 +1,7 @@
 # debugforge-server
 
-A FastAPI application with a single endpoint that forwards a code snippet to the
-`debugforge-agent` (deployed on AWS Bedrock AgentCore) to run, test, execute, and fix bugs in it.
+A FastAPI application that forwards code-debugging and GitHub pull-request review requests to the
+`debugforge-agent` (deployed on AWS Bedrock AgentCore).
 
 Structured the same way as the `super_twin/backend` FastAPI app:
 - `server.py` - the FastAPI app and routes
@@ -11,7 +11,7 @@ Structured the same way as the `super_twin/backend` FastAPI app:
 
 ## Endpoint
 
-### `POST /debug-code` (Server-Sent Events)
+### `POST /api/debug-code` (Server-Sent Events)
 
 Request body:
 ```json
@@ -35,6 +35,55 @@ big response:
 - `event: error` - sent instead of `result` if invoking the agent fails. `data`: `{"error": "...", "session_id": "..."}`
 
 Pass the `session_id` from a prior response back in to continue the same conversation with the agent.
+
+### `POST /api/review-pr` (Server-Sent Events)
+
+Request body:
+```json
+{
+  "project": "owner/repository",
+  "repository_id": 123456,
+  "pull_request_number": 123,
+  "pull_request_id": 456789,
+  "issue_number": 123,
+  "issue_id": 987654,
+  "focus": "authorization changes",
+  "session_id": null
+}
+```
+
+The authenticated endpoint emits the same `progress` and `error` event shapes as `/debug-code`.
+Its final `result` contains `summary`, `findings`, and `verdict`; each finding includes the
+repository-relative `file_path`, problematic `code`, suggested `new_code`, optional `tests`,
+an explanatory `comment`, and severity (`P0`–`P3`).
+Set `GITHUB_MCP_TOKEN` in the agent environment. The GitHub MCP server is opened only for this
+review workflow.
+
+```bash
+curl -N -X POST http://localhost:8000/api/review-pr \
+  -H "Authorization: Bearer <clerk-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"owner/repository","pull_request_number":123}'
+```
+
+### GitHub search endpoints
+
+The PR-review page uses these authenticated API endpoints as a server-side proxy to GitHub REST.
+The PAT is never sent to the browser:
+
+- `GET /api/github/owners/search?q=...` — user and organization suggestions.
+- `GET /api/github/repositories/search?q=...&owner=...` — repository suggestions, optionally
+  scoped to a selected owner.
+- `GET /api/github/repositories/{owner}/{repository}/pull-requests?state=open&q=...` — matching
+  PRs, or the ten most recently updated open PRs when `q` is empty. Set `state=all` to include
+  closed and merged PRs.
+- `GET /api/github/repositories/{owner}/{repository}/pull-requests/{number}` — canonical PR and
+  linked issue identifiers.
+
+For local development, set `GITHUB_API_TOKEN` in `api/.env` to a read-only fine-grained PAT.
+For Lambda, store the token as a Secrets Manager secret and set
+`GITHUB_API_TOKEN_SECRET_ARN` (Terraform variable `github_api_token_secret_arn`). The PAT should
+only grant access to repositories that users of this DebugForge deployment are allowed to review.
 
 ## Test against a locally running agent
 

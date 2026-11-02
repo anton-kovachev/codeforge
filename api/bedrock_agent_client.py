@@ -20,6 +20,9 @@ from models import (
     DebugCodeRequest,
     DebugCodeResultEvent,
     DebuggedCodeOutput,
+    PRReviewOutput,
+    PRReviewRequest,
+    PRReviewResultEvent,
     TodoReport,
 )
 
@@ -75,6 +78,24 @@ def _build_prompt(request: DebugCodeRequest) -> str:
     return "\n".join(parts)
 
 
+def _build_pr_review_prompt(request: PRReviewRequest) -> str:
+    parts = [
+        f"Review pull request #{request.pull_request_number} in {request.project}.",
+        "Use the available GitHub MCP tools to inspect the PR, its complete diff, changed files, and relevant tests and source.",
+    ]
+    if request.repository_id is not None:
+        parts.append(f"GitHub repository ID: {request.repository_id}")
+    if request.pull_request_id is not None:
+        parts.append(f"GitHub pull request ID: {request.pull_request_id}")
+    if request.issue_number is not None:
+        parts.append(f"Related issue number: {request.issue_number}")
+    if request.issue_id is not None:
+        parts.append(f"Related issue ID: {request.issue_id}")
+    if request.focus:
+        parts.append(f"Review focus: {request.focus}")
+    return "\n".join(parts)
+
+
 def _iter_event_stream_chunks(body: Any) -> Iterator[str]:
     """Yield each text chunk out of the agent's SSE ('data: <json>') response stream, as it arrives."""
     lines = body.iter_lines(chunk_size=1) if hasattr(body, "iter_lines") else body
@@ -123,7 +144,9 @@ def _get_client() -> BaseClient:
     return _client
 
 
-def _parse_agent_output(chunk: str) -> TodoReport | DebuggedCodeOutput:
+def _parse_agent_output(
+    chunk: str,
+) -> TodoReport | DebuggedCodeOutput | PRReviewOutput:
     """Parse one complete todo report or final structured agent response."""
     try:
         payload = json.loads(chunk)
@@ -145,6 +168,8 @@ def _parse_agent_output(chunk: str) -> TodoReport | DebuggedCodeOutput:
         return TodoReport.model_validate(payload)
     if {"code", "tests", "description"}.issubset(payload):
         return DebuggedCodeOutput.model_validate(payload)
+    if {"summary", "verdict"}.issubset(payload):
+        return PRReviewOutput.model_validate(payload)
 
     if "error" in payload:
         raise RuntimeError(f"Agent returned an error: {payload['error']}")
@@ -153,19 +178,15 @@ def _parse_agent_output(chunk: str) -> TodoReport | DebuggedCodeOutput:
 
 
 def _invoke_and_iter_chunks(
-    prompt: str,
+    payload: dict[str, Any],
     session_id: str,
-    code: str,
-    language: str,
 ) -> Iterator[str]:
     """Call the agent runtime and yield its response as a sequence of text chunks (blocking)."""
-    payload = json.dumps(
-        {"prompt": prompt, "code": code, "language": language}
-    ).encode("utf-8")
+    serialized_payload = json.dumps(payload).encode("utf-8")
     if AGENT_RUNTIME_URL:
         request = Request(
             AGENT_RUNTIME_URL,
-            data=payload,
+            data=serialized_payload,
             headers={
                 "Content-Type": "application/json",
                 "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id,
@@ -188,58 +209,62 @@ def _invoke_and_iter_chunks(
         agentRuntimeArn=AGENT_RUNTIME_ARN,
         qualifier=AGENT_ENDPOINT_NAME,
         runtimeSessionId=session_id,
-        payload=payload,
+        payload=serialized_payload,
     )
 
-    yield from _iter_response_chunks(
-        response["response"],
-        response.get("contentType", ""),
-    )
+    response_body = response["response"]
+    try:
+        yield from _iter_response_chunks(
+            response_body,
+            response.get("contentType", ""),
+        )
+    finally:
+        response_body.close()
 
 
 # Sentinel values passed through the thread -> asyncio bridge queue below.
 _DONE = object()
 
 
-def stream_debug_events(
-    request: DebugCodeRequest,
+def _stream_agent_events(
+    payload: dict[str, Any],
+    session_id: str,
 ) -> AsyncGenerator[ServerSentEvent, None]:
-    """Invoke the DebugForge agent and stream back SSE events as it works.
-
-    Yields "progress" events containing todo reports, followed by a "result" event containing
-    the structured final answer, or an "error" event if invocation or response parsing fails.
-
-    The underlying boto3 call is blocking, so it runs on a background thread that feeds chunks
-    into an asyncio.Queue, which this async generator then drains and re-yields as SSE events.
-    """
+    """Invoke an agent workflow and stream todo reports and its structured result."""
     if not AGENT_RUNTIME_URL and not AGENT_RUNTIME_ARN:
         raise RuntimeError(
             "Set AGENT_RUNTIME_URL for a local agent, or AGENT_RUNTIME_ARN for a deployed agent"
         )
-
-    # runtimeSessionId must be at least 33 characters; a uuid4 string (36 chars) satisfies this.
-    session_id = request.session_id or str(uuid.uuid4())
-    prompt = _build_prompt(request)
 
     async def generator() -> AsyncGenerator[ServerSentEvent, None]:
         loop = asyncio.get_running_loop()
         chunk_queue: "asyncio.Queue[object]" = asyncio.Queue()
 
         def producer() -> None:
+            chunks: Iterator[str] | None = None
             try:
-                for chunk in _invoke_and_iter_chunks(
-                    prompt,
-                    session_id,
-                    request.code,
-                    request.language,
-                ):
-                    loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
-            except (
-                Exception
-            ) as exc:  # noqa: BLE001 - surfaced to the client as an error event
+                chunks = iter(_invoke_and_iter_chunks(payload, session_id))
+                for chunk in chunks:
+                    try:
+                        agent_output = _parse_agent_output(chunk)
+                    except (RuntimeError, ValueError, ValidationError) as exc:
+                        loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
+                        break
+
+                    loop.call_soon_threadsafe(chunk_queue.put_nowait, agent_output)
+                    if not isinstance(agent_output, TodoReport):
+                        break
+            except Exception as exc:  # noqa: BLE001 - surfaced as an error event
                 loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
             finally:
-                loop.call_soon_threadsafe(chunk_queue.put_nowait, _DONE)
+                try:
+                    close = getattr(chunks, "close", None) if chunks is not None else None
+                    if close is not None:
+                        close()
+                except Exception as exc:  # noqa: BLE001 - surfaced as an error event
+                    loop.call_soon_threadsafe(chunk_queue.put_nowait, exc)
+                finally:
+                    loop.call_soon_threadsafe(chunk_queue.put_nowait, _DONE)
 
         threading.Thread(target=producer, daemon=True).start()
 
@@ -254,15 +279,7 @@ def stream_debug_events(
                     data={"error": str(item), "session_id": session_id},
                 )
                 return
-            try:
-                agent_output = _parse_agent_output(item)
-            except (RuntimeError, ValueError, ValidationError) as exc:
-                yield ServerSentEvent(
-                    event="error",
-                    data={"error": str(exc), "session_id": session_id},
-                )
-                return
-
+            agent_output = item
             if isinstance(agent_output, TodoReport):
                 progress = DebugCodeProgressEvent(
                     todo_report=agent_output,
@@ -275,22 +292,62 @@ def stream_debug_events(
                 continue
 
             result_received = True
-            result = DebugCodeResultEvent(
-                result=agent_output,
-                session_id=session_id,
-            )
+            if isinstance(agent_output, PRReviewOutput):
+                result = PRReviewResultEvent(
+                    result=agent_output,
+                    session_id=session_id,
+                )
+            else:
+                result = DebugCodeResultEvent(
+                    result=agent_output,
+                    session_id=session_id,
+                )
             yield ServerSentEvent(
                 event="result",
                 data=result.model_dump(mode="json"),
             )
+            return
 
         if not result_received:
             yield ServerSentEvent(
                 event="error",
                 data={
-                    "error": "Agent stream completed without a DebuggedCodeOutput result",
+                    "error": "Agent stream completed without a structured result",
                     "session_id": session_id,
                 },
             )
 
     return generator()
+
+
+def stream_debug_events(
+    request: DebugCodeRequest,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Stream progress and the structured result from the debug workflow."""
+    session_id = request.session_id or str(uuid.uuid4())
+    payload = {
+        "workflow": "debug",
+        "prompt": _build_prompt(request),
+        "code": request.code,
+        "language": request.language,
+    }
+    return _stream_agent_events(payload, session_id)
+
+
+def stream_pr_review_events(
+    request: PRReviewRequest,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Stream progress and the structured result from the PR review workflow."""
+    session_id = request.session_id or str(uuid.uuid4())
+    payload = {
+        "workflow": "pr_review",
+        "prompt": _build_pr_review_prompt(request),
+        "project": request.project,
+        "repository_id": request.repository_id,
+        "pull_request_number": request.pull_request_number,
+        "pull_request_id": request.pull_request_id,
+        "issue_number": request.issue_number,
+        "issue_id": request.issue_id,
+        "focus": request.focus,
+    }
+    return _stream_agent_events(payload, session_id)

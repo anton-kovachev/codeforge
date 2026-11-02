@@ -15,6 +15,7 @@ APP_FILES = [
     "lambda_handler.py",
     "models.py",
     "bedrock_agent_client.py",
+    "github_client.py",
 ]
 
 

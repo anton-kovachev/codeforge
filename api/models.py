@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class DebugCodeRequest(BaseModel):
@@ -70,3 +70,70 @@ class DebugCodeErrorEvent(BaseModel):
 
     error: str = Field(..., description="A human-readable description of what went wrong")
     session_id: str = Field(..., description="The session id used for this request")
+
+
+class PRReviewRequest(BaseModel):
+    """A request to review a pull request in a preset GitHub repository."""
+
+    project: str = Field(
+        ...,
+        description="The GitHub repository for the selected project, in owner/repository format",
+    )
+    repository_id: int | None = Field(
+        None, gt=0, description="GitHub's numeric ID for the repository"
+    )
+    pull_request_number: int = Field(..., gt=0)
+    pull_request_id: int | None = Field(
+        None, gt=0, description="GitHub's numeric ID for the pull request"
+    )
+    issue_number: int | None = Field(
+        None, gt=0, description="Number of the issue associated with the pull request"
+    )
+    issue_id: int | None = Field(
+        None, gt=0, description="GitHub's numeric ID for the associated issue"
+    )
+    focus: Optional[str] = Field(
+        None,
+        description="Optional review focus or additional context",
+    )
+    session_id: Optional[str] = Field(
+        None, description="Optional session id to continue a previous review"
+    )
+
+
+class PRReviewFinding(BaseModel):
+    file_path: str = Field(
+        ...,
+        min_length=1,
+        description="Exact repository-relative path of the changed file containing the issue",
+    )
+    code: str
+    new_code: str
+    tests: Optional[str] = None
+    comment: str
+    severity: Literal["P0", "P1", "P2", "P3"]
+
+    @field_validator("file_path")
+    @classmethod
+    def validate_repository_relative_path(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or value.startswith("/")
+            or "\\" in value
+            or any(part in ("", ".", "..") for part in value.split("/"))
+        ):
+            raise ValueError("file_path must be an exact repository-relative path")
+        return value
+
+
+class PRReviewOutput(BaseModel):
+    summary: str
+    findings: list[PRReviewFinding] = Field(default_factory=list)
+    verdict: bool
+
+
+class PRReviewResultEvent(BaseModel):
+    """The structured result returned by the PR review workflow."""
+
+    result: PRReviewOutput
+    session_id: str

@@ -22,9 +22,24 @@ if [[ -z "$CLERK_PUBLISHABLE_KEY" ]]; then
   echo "Set CLERK_PUBLISHABLE_KEY before deploying the frontend." >&2
   exit 1
 fi
+if [[ -z "$GITHUB_API_TOKEN" ]]; then
+  echo "Set GITHUB_API_TOKEN before deploying the frontend." >&2
+  exit 1
+fi
+if [[ -z "$GITHUB_MCP_TOKEN" ]]; then
+  echo "Set GITHUB_MCP_TOKEN before deploying the frontend." >&2
+  exit 1
+fi
+if [[ -z "$OPENAI_API_KEY" ]]; then
+  echo "Set OPENAI_API_KEY before deploying the frontend." >&2
+  exit 1
+fi
 
 export TF_VAR_aws_bearer_token_bedrock=${TF_VAR_aws_bearer_token_bedrock:-${AWS_BEARER_TOKEN_BEDROCK:-}}
 export TF_VAR_clerk_jwks_url=${TF_VAR_clerk_jwks_url:-${CLERK_JWKS_URL:-}}
+export TF_VAR_github_api_token=$GITHUB_API_TOKEN
+export TF_VAR_github_mcp_token=$GITHUB_MCP_TOKEN
+export TF_VAR_openai_api_key=$OPENAI_API_KEY
 
 prepare_phase() {
   local phase_dir=$1

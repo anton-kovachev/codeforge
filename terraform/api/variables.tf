@@ -64,3 +64,10 @@ variable "clerk_jwks_url" {
   description = "Clerk JWKS URL used to validate JWTs (CLERK_JWKS_URL)"
   type        = string
 }
+
+variable "github_api_token" {
+  description = "Optional Secrets Manager ARN containing the GitHub REST API token"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

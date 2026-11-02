@@ -95,7 +95,7 @@ In another terminal, create API configuration:
 cp api/.env.example api/.env
 ```
 
-Set `AGENT_RUNTIME_URL=http://localhost:8080/invocations` to use the local agent, and set `CLERK_JWKS_URL` to the JWKS endpoint for your Clerk application. Configure `CORS_ORIGINS` with the local frontend origin when using a browser.
+Set `AGENT_RUNTIME_URL=http://localhost:8080/invocations` to use the local agent, set `CLERK_JWKS_URL` to the JWKS endpoint for your Clerk application, and set `GITHUB_API_TOKEN` to a read-only GitHub PAT for repository/PR search. Configure `CORS_ORIGINS` with the local frontend origin when using a browser. The PAT stays on the API server and is not exposed as a frontend variable.
 
 ```bash
 cd api
@@ -108,6 +108,13 @@ The API routes are:
 - `GET /` — service information.
 - `GET /api/health` — health status.
 - `POST /api/debug-code` — authenticated SSE debugging endpoint.
+- `GET /api/github/owners/search` — authenticated user/organization typeahead.
+- `GET /api/github/repositories/search` — authenticated repository typeahead, optionally scoped to an owner.
+- `GET /api/github/repositories/{owner}/{repository}/pull-requests` — authenticated open or all-state PR typeahead.
+- `POST /api/review-pr` — authenticated SSE GitHub pull-request review endpoint. It accepts
+  `project` (`owner/repository`), repository/PR/issue identifiers, optional `focus`, and optional
+  `session_id`; the final result contains `summary`, severity-tagged findings with repository-
+  relative file paths, and a boolean `verdict`.
 
 Example request body:
 
@@ -128,6 +135,15 @@ curl -N -X POST http://localhost:8000/api/debug-code \
   -H "Authorization: Bearer <clerk-session-token>" \
   -H "Content-Type: application/json" \
   -d '{"code":"def add(a, b):\n    return a - b\n"}'
+```
+
+For pull request reviews, configure `GITHUB_MCP_TOKEN` in the agent environment and call:
+
+```bash
+curl -N -X POST http://localhost:8000/api/review-pr \
+  -H "Authorization: Bearer <clerk-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"owner/repository","pull_request_number":123}'
 ```
 
 ### Run the frontend locally
@@ -181,6 +197,12 @@ The orchestrator:
 2. Passes those values into `terraform/api`, which builds/pushes the API image and deploys the Lambda and streaming Function URL.
 3. Provisions the frontend S3 website bucket, builds the Next.js frontend as a static export using the API Function URL and Clerk publishable key, and syncs `frontend/out/` to S3.
 4. Prints the API and S3 website URLs.
+
+The API image is built with Docker Buildx using host networking for build-time package
+downloads. The selected BuildKit builder must permit the `network.host` entitlement (for
+example, start/configure BuildKit with `--allow-insecure-entitlement network.host`); the
+deployment build requests it explicitly. This changes networking for Dockerfile build
+steps only, not the deployed container's runtime network mode.
 
 The output values are also available directly from their Terraform roots. Each phase uses its own Terraform state and workspace. The current configuration uses local Terraform state; configure a secure remote backend before team or production use.
 
